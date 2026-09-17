@@ -5,7 +5,9 @@ Streamlit chat app that retrieves relevant policy chunks from a local
 FAISS index and asks a Groq-hosted LLM to answer using only that context.
 """
 
+import os
 from pathlib import Path
+import streamlit as st
 from pypdf import PdfReader
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -15,12 +17,18 @@ from groq import Groq
 # ----------------------------------------------------------------------
 # Config
 # ----------------------------------------------------------------------
-INDEX_DIR = "faiss_index"
 EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 GROQ_MODEL = "openai/gpt-oss-120b"
 TOP_K = 4
 
-st.set_page_config(page_title="jhullans Hospital Knowledge Base Assistant", page_icon="🏥")
+st.set_page_config(page_title="Hospital Knowledge Base Assistant", page_icon="🏥")
+
+# ----------------------------------------------------------------------
+# Path Configurations Matching Your Exact Repo Layout
+# ----------------------------------------------------------------------
+BASE_DIR = Path(__file__).parent
+DOCUMENTS_DIR = BASE_DIR / "Hospital_Knowledge_Base_PDFs"
+INDEX_DIR = BASE_DIR / "faiss_index"
 
 # ----------------------------------------------------------------------
 # API key — read from Streamlit secrets, never shown in a text box
@@ -29,7 +37,7 @@ GROQ_API_KEY = st.secrets.get("GROQ_API_KEY") or os.environ.get("GROQ_API_KEY")
 
 if not GROQ_API_KEY:
     st.error(
-        "No Groq API key found. Add it to `.streamlit/secrets.toml` as:\n\n"
+        "No Groq API key found. Add it to `.streamlit/secrets.toml` or Streamlit Cloud Secrets as:\n\n"
         '```\nGROQ_API_KEY = "your_key_here"\n```'
     )
     st.stop()
@@ -38,15 +46,14 @@ client = Groq(api_key=GROQ_API_KEY)
 
 
 # ----------------------------------------------------------------------
-# Load embeddings + FAISS index (cached so it only loads once)
+# PDF Extraction & Indexing Functions
 # ----------------------------------------------------------------------
-BASE_DIR = Path(__file__).parent
-DOCUMENTS_DIR = BASE_DIR / "documents"
-INDEX_DIR = BASE_DIR / "faiss_index"
-
-
 def extract_pdf_documents():
     documents = []
+    
+    if not DOCUMENTS_DIR.exists():
+        st.error(f"Directory `{DOCUMENTS_DIR.name}` not found. Please verify PDF location.")
+        st.stop()
 
     pdf_files = list(DOCUMENTS_DIR.glob("*.pdf"))
 
@@ -70,13 +77,10 @@ def extract_pdf_documents():
 
 
 def create_faiss_index(embeddings):
-
     raw_documents = extract_pdf_documents()
 
     if not raw_documents:
-        st.error(
-            "No PDF files found. Put your hospital PDFs inside the documents folder."
-        )
+        st.error(f"No PDF files found inside `{DOCUMENTS_DIR.name}`.")
         st.stop()
 
     splitter = RecursiveCharacterTextSplitter(
@@ -101,7 +105,6 @@ def create_faiss_index(embeddings):
     )
 
     INDEX_DIR.mkdir(parents=True, exist_ok=True)
-
     vectorstore.save_local(str(INDEX_DIR))
 
     return vectorstore
@@ -109,13 +112,12 @@ def create_faiss_index(embeddings):
 
 @st.cache_resource(show_spinner="Loading hospital knowledge base...")
 def load_vectorstore():
-
     embeddings = HuggingFaceEmbeddings(
         model_name=EMBED_MODEL,
         encode_kwargs={"normalize_embeddings": True}
     )
 
-    # FAISS already exists
+    # Load existing index if already created
     if (INDEX_DIR / "index.faiss").exists():
         return FAISS.load_local(
             str(INDEX_DIR),
@@ -123,28 +125,16 @@ def load_vectorstore():
             allow_dangerous_deserialization=True
         )
 
-    # FAISS does not exist -> create it
+    # Generate FAISS index from Hospital_Knowledge_Base_PDFs if missing
     st.info("FAISS index not found. Creating it from hospital PDFs...")
-
     return create_faiss_index(embeddings)
-
-
-vectorstore = load_vectorstore()
-
-embeddings = HuggingFaceEmbeddings(
-        model_name=EMBED_MODEL,
-        encode_kwargs={"normalize_embeddings": True},
-    )
-return FAISS.load_local(
-        INDEX_DIR, embeddings, allow_dangerous_deserialization=True
-    )
 
 
 vectorstore = load_vectorstore()
 
 
 # ----------------------------------------------------------------------
-# Retrieval + generation
+# Retrieval + Generation Functions
 # ----------------------------------------------------------------------
 def retrieve_chunks(question, k=TOP_K):
     return vectorstore.similarity_search(question, k=k)
@@ -181,7 +171,7 @@ def ask_groq(question, context):
 
 
 # ----------------------------------------------------------------------
-# UI
+# Chat Interface
 # ----------------------------------------------------------------------
 st.title("🏥 Hospital Knowledge Base Assistant")
 st.caption("Ask a question about hospital policy. Answers are grounded in your indexed documents.")
@@ -189,7 +179,7 @@ st.caption("Ask a question about hospital policy. Answers are grounded in your i
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# render chat history
+# Render chat history
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
@@ -223,7 +213,8 @@ if question:
             }
             for c in chunks
         ]
-        # de-duplicate sources while keeping order
+        
+        # Deduplicate sources while keeping order
         seen = set()
         unique_sources = []
         for s in sources:
