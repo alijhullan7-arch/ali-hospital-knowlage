@@ -27,7 +27,7 @@ st.set_page_config(page_title="Hospital Knowledge Base Assistant", page_icon="ðŸ
 # Path Configurations Matching Your Exact Repo Layout
 # ----------------------------------------------------------------------
 BASE_DIR = Path(__file__).parent
-DOCUMENTS_DIR = BASE_DIR / "Hospital_Knowledge_Base_PDFs"
+DOCUMENTS_DIR = BASE_DIR / "Hospital_Knowledge_Base_PDFs" / "Hospital_Knowledge_Base_PDFs"
 INDEX_DIR = BASE_DIR / "faiss_index"
 
 # ----------------------------------------------------------------------
